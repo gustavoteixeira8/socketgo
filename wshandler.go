@@ -1,19 +1,16 @@
 package socketgo
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"sync"
 
-	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
-	"github.com/sirupsen/logrus"
 )
 
 type WsHandler struct {
-	connMap  map[string]*websocket.Conn
-	events   map[string]func(data *Message) (any, error)
+	connMap  map[string]*Client
+	events   map[string]EventFn
 	mutex    *sync.RWMutex
 	upgrader websocket.Upgrader
 }
@@ -28,25 +25,19 @@ func NewWsHandler() *WsHandler {
 	}
 
 	return &WsHandler{
-		connMap:  make(map[string]*websocket.Conn),
-		events:   make(map[string]func(data *Message) (any, error)),
+		connMap:  make(map[string]*Client),
+		events:   make(map[string]EventFn),
 		mutex:    &sync.RWMutex{},
 		upgrader: wsUpgrader,
 	}
 }
 
-type Message struct {
-	Action   string `json:"action"`
-	ClientID string
-	Data     any `json:"data"`
-}
-
-func (c *WsHandler) InitServer(port string) error {
+func (ws *WsHandler) Serve(endpoint string, port string) error {
 	router := http.NewServeMux()
 
 	handleFunc := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 
-		conn, err := c.upgrader.Upgrade(w, r, nil)
+		conn, err := ws.upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			Response(
 				w,
@@ -56,94 +47,36 @@ func (c *WsHandler) InitServer(port string) error {
 			return
 		}
 
-		id := uuid.NewString()
+		client := NewClient(conn, ws.events)
 
-		c.mutex.Lock()
-		c.connMap[id] = conn
-		c.mutex.Unlock()
+		ws.mutex.Lock()
+		ws.connMap[client.GetID()] = client
+		ws.mutex.Unlock()
 
-		go c.listen(id)
+		go client.Listen()
 	})
 
-	router.Handle("/ws", handleFunc)
-	router.Handle("/ws/", handleFunc)
+	router.Handle(endpoint, handleFunc)
+	router.Handle(fmt.Sprintf("%s/", endpoint), handleFunc)
 
 	return http.ListenAndServe(port, router)
 }
 
-func (c *WsHandler) On(event string, fn func(data *Message) (any, error)) {
-	c.mutex.Lock()
+func (ws *WsHandler) On(event string, fn func(data *Message) (any, error)) {
+	ws.mutex.Lock()
 
-	_, ok := c.events[event]
+	_, ok := ws.events[event]
 	if ok {
 		return
 	}
 
-	c.events[event] = fn
+	ws.events[event] = fn
 
-	c.mutex.Unlock()
+	ws.mutex.Unlock()
 }
 
-func (c *WsHandler) NotifyAll(event string) {
-
-	for id, conn := range c.connMap {
-		msgInstance := &Message{ClientID: id, Action: event}
-
-		fn, ok := c.events[event]
-		if !ok {
-			conn.WriteJSON("action not found")
-			continue
-		}
-
-		msgInstance.ClientID = id
-
-		out, err := fn(msgInstance)
-		if err != nil {
-			conn.WriteJSON(err.Error())
-			continue
-		}
-
-		conn.WriteJSON(out)
-	}
-
-}
-
-func (c *WsHandler) listen(id string) {
-
-	conn := c.connMap[id]
-
-	defer conn.Close()
-
-	for {
-		msgType, msg, err := conn.ReadMessage()
-		if err != nil || msgType == websocket.CloseMessage {
-			logrus.Errorf("error reading message to %s: %v", err, id)
-			return
-		}
-
-		msgInstance := &Message{}
-
-		err = json.Unmarshal(msg, msgInstance)
-		if err != nil {
-			conn.WriteMessage(websocket.TextMessage, []byte("error reading message"))
-			continue
-		}
-
-		fn, ok := c.events[msgInstance.Action]
-		if !ok {
-			conn.WriteJSON("action not found")
-			continue
-		}
-
-		msgInstance.ClientID = id
-
-		out, err := fn(msgInstance)
-		if err != nil {
-			conn.WriteJSON(err.Error())
-			continue
-		}
-
-		conn.WriteJSON(out)
-
+func (ws *WsHandler) NotifyAll(event string, data *Message) {
+	for _, client := range ws.connMap {
+		client.Notify(event, data)
 	}
 }

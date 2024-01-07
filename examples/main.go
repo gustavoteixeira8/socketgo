@@ -17,7 +17,7 @@ func main() {
 
 		msgs[data.ClientID] = clientMsgs
 
-		c.NotifyAll("get-all-messages")
+		c.NotifyAll("get-all-messages", data)
 
 		return nil, nil
 	})
@@ -28,5 +28,5 @@ func main() {
 		return msgs, nil
 	})
 
-	c.InitServer(":3000")
+	c.Serve("/ws", ":3000")
 }
