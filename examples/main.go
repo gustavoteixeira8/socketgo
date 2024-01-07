@@ -1,21 +1,44 @@
 package main
 
 import (
-	"fmt"
 	"socketgo"
+
+	"github.com/gustavoteixeira8/localdb"
 )
 
-var msgs = map[string][]string{}
+type ChatMessages struct {
+	*localdb.Base
+	Message  string
+	ClientID string
+}
 
 func main() {
 	c := socketgo.NewWsHandler()
 
+	cfg := &localdb.DBManagerConfig{
+		Path:        "./chat-messages",
+		StorageType: localdb.StorageTypeJSON,
+	}
+
+	r := localdb.New[*ChatMessages](cfg)
+
+	err := r.Start()
+	if err != nil {
+		panic(err)
+	}
+
+	err = r.Migrate(&ChatMessages{})
+	if err != nil {
+		panic(err)
+	}
+
 	c.On("message", func(data *socketgo.Message) (any, error) {
-		clientMsgs := msgs[data.ClientID]
 
-		clientMsgs = append(clientMsgs, data.Data.(string))
-
-		msgs[data.ClientID] = clientMsgs
+		r.Add(&ChatMessages{
+			Base:     localdb.NewBase(),
+			Message:  data.Data.(string),
+			ClientID: data.ClientID,
+		})
 
 		c.NotifyAll("get-all-messages", data)
 
@@ -23,7 +46,15 @@ func main() {
 	})
 
 	c.On("get-all-messages", func(data *socketgo.Message) (any, error) {
-		fmt.Println(msgs)
+
+		msgs, err := r.Find(func(model *ChatMessages) *localdb.FindResponse[*ChatMessages] {
+			return &localdb.FindResponse[*ChatMessages]{
+				Query: true,
+			}
+		})
+		if err != nil {
+			return nil, err
+		}
 
 		return msgs, nil
 	})
