@@ -1,6 +1,7 @@
 package socketgo
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"sync"
@@ -9,10 +10,11 @@ import (
 )
 
 type WsHandler struct {
-	connMap  map[string]*Client
-	events   map[string]EventFn
-	mutex    *sync.RWMutex
-	upgrader websocket.Upgrader
+	httpServer *http.Server
+	connMap    map[string]*Client
+	events     map[string]EventFn
+	mutex      *sync.RWMutex
+	upgrader   websocket.Upgrader
 }
 
 func NewWsHandler() *WsHandler {
@@ -59,7 +61,14 @@ func (ws *WsHandler) Serve(endpoint string, port string) error {
 	router.Handle(endpoint, handleFunc)
 	router.Handle(fmt.Sprintf("%s/", endpoint), handleFunc)
 
-	return http.ListenAndServe(port, router)
+	server := &http.Server{
+		Addr:    port,
+		Handler: router,
+	}
+
+	ws.httpServer = server
+
+	return server.ListenAndServe()
 }
 
 func (ws *WsHandler) On(event string, fn func(data *Message) (any, error)) {
@@ -79,4 +88,22 @@ func (ws *WsHandler) NotifyAll(event string, data *Message) {
 	for _, client := range ws.connMap {
 		client.Notify(event, data)
 	}
+}
+
+func (ws *WsHandler) Close() error {
+	var err error
+
+	for _, client := range ws.connMap {
+		err = client.Close()
+		if err != nil {
+			return err
+		}
+	}
+
+	err = ws.httpServer.Shutdown(context.Background())
+	if err != nil {
+		return err
+	}
+
+	return nil
 }

@@ -3,7 +3,7 @@ package socketgo
 type EventFn func(data *Message) (any, error)
 
 type Message struct {
-	Action   string `json:"action"`
-	ClientID string
-	Data     any `json:"data"`
+	Event    string `json:"Event"`
+	ClientID string `json:"clientId"`
+	Data     any    `json:"data"`
 }

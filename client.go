@@ -49,7 +49,7 @@ func (c *Client) Listen() {
 			continue
 		}
 
-		fn, ok := c.events[msgInstance.Action]
+		fn, ok := c.events[msgInstance.Event]
 		if !ok {
 			c.Send("event not found")
 			continue
